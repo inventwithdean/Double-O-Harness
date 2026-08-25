@@ -11,10 +11,10 @@ use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, tool, tool_handler}
 use rmcp::{handler::server::tool::ToolRouter, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{env, io::Read};
+use std::env;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use wreq::{Client, Proxy, header};
+use wreq::{Client, Proxy};
 use wreq_util::Emulation;
 
 mod web;
@@ -45,7 +45,7 @@ impl WebIntelligence {
         Parameters(req): Parameters<SearchRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client = self.http_client.clone();
-        let results = match web_search(req.query, &client).await {
+        let results = match web::web_search(req.query, &client).await {
             Ok(res) => res,
             Err(e) => format!("Search failed: {}", e),
         };
@@ -121,52 +121,4 @@ async fn main() -> Result<()> {
         .await;
 
     Ok(())
-}
-
-fn decompress_br(raw_bytes: &[u8]) -> String {
-    let mut raw_html = String::new();
-    let mut decompressor = brotli::Decompressor::new(raw_bytes, 4096);
-    if let Err(e) = decompressor.read_to_string(&mut raw_html) {
-        println!("Brotli decompression failed (maybe not compressed): {e}");
-        raw_html = String::from_utf8_lossy(raw_bytes).to_string();
-    }
-    raw_html
-}
-
-/// Performs Web Search and returns them in formatted string
-async fn web_search(query: String, client: &Client) -> Result<String> {
-    // Brotli compressed DuckDuckGo Lite endpoint
-    // ~15KB per search
-    // 1GB proxy bandwidth gives is ~66,000 queries.
-    // Giving us ~16,500 searches per dollar (Decodo's Residential Rotating IPs pay to go is $4/GB)
-    // ~170 searches per INR.
-
-    let resp = client
-        .post("https://lite.duckduckgo.com/lite/")
-        .header(header::ACCEPT_ENCODING, "br, gzip, deflate")
-        .form(&[("q", query)])
-        .send()
-        .await?;
-
-    let raw_bytes = resp.bytes().await?;
-    let raw_html = decompress_br(&raw_bytes);
-
-    // println!("{raw_html}");
-    let mut results_string = String::new();
-
-    match web::get_structured_web_search_result(&raw_html) {
-        Ok(search_results) => {
-            for result in search_results {
-                results_string.push_str(&format!(
-                    "Title: {}\nURL: {}\nSnippet: {}\n\n",
-                    result.title, result.url, result.snippet
-                ));
-            }
-        }
-        Err(_) => {
-            results_string.push_str("No Results found!");
-        }
-    };
-
-    Ok(results_string)
 }
