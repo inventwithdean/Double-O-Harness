@@ -16,12 +16,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7.19"
-tower-http = { version = "0.7.0", features = ["cors"] }
+tower-http = { version = "0.7.0", features = ["cors", "fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = [
     "env-filter",
     "std",
     "fmt",
 ] }
+uuid = { version = "1.25.0", features = ["v4", "fast-rng"] }
 wreq = { version = "0.16", features= ["form", "json"] }
 wreq-util = "0.2"
