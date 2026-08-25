@@ -24,6 +24,11 @@ pub struct SearchRequest {
     pub query: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScrapeRequest {
+    pub url: String,
+}
+
 #[derive(Clone)]
 pub struct WebIntelligence {
     http_client: Client,
@@ -45,11 +50,24 @@ impl WebIntelligence {
         Parameters(req): Parameters<SearchRequest>,
     ) -> Result<CallToolResult, McpError> {
         let client = self.http_client.clone();
-        let results = match web::web_search(req.query, &client).await {
+        let results = match web::web_search(&req.query, &client).await {
             Ok(res) => res,
             Err(e) => format!("Search failed: {}", e),
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(results)]))
+    }
+
+    #[tool(description = "Scrapes the specified URL for content")]
+    async fn scrape_url(
+        &self,
+        Parameters(req): Parameters<ScrapeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.http_client.clone();
+        let result = match web::scrape_url(&req.url, &client).await {
+            Ok(res) => res,
+            Err(e) => format!("Scrape failed: {}", e),
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(result)]))
     }
 }
 

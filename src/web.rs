@@ -1,7 +1,7 @@
 use std::io::Read;
 
 use anyhow::Result;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use wreq::{Client, header};
 
 #[derive(Debug)]
@@ -12,7 +12,7 @@ pub struct WebSearchResult {
 }
 
 /// Parses the html and extracts results in WebSearchResult struct.
-fn get_structured_web_search_result(raw_html: &String) -> Result<Vec<WebSearchResult>> {
+fn get_structured_web_search_result(raw_html: &str) -> Result<Vec<WebSearchResult>> {
     let document = Html::parse_document(&raw_html);
     let title_selector = Selector::parse("a.result-link").unwrap();
     let snippet_selector = Selector::parse("td.result-snippet").unwrap();
@@ -61,7 +61,7 @@ fn decompress_br(raw_bytes: &[u8]) -> String {
 }
 
 /// Performs Web Search and returns them in formatted string
-pub async fn web_search(query: String, client: &Client) -> Result<String> {
+pub async fn web_search(query: &str, client: &Client) -> Result<String> {
     // Brotli compressed DuckDuckGo Lite endpoint
     // ~15KB per search
     // 1GB proxy bandwidth gives is ~66,000 queries.
@@ -96,4 +96,105 @@ pub async fn web_search(query: String, client: &Client) -> Result<String> {
     };
 
     Ok(results_string)
+}
+
+pub struct PageContent {
+    pub title: String,
+    pub description: String,
+    pub url: String,
+    pub text: String,
+}
+
+pub async fn scrape_url(url: &str, client: &Client) -> Result<String> {
+    let resp = client
+        .get(url)
+        .header(header::ACCEPT_ENCODING, "br, gzip, deflate")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Ok(format!(
+            "HTTP {} while fetching {url}",
+            resp.status().as_u16()
+        ));
+    }
+
+    if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
+        if !ct.to_str().unwrap_or("").contains("text/html") {
+            return Ok(format!("Not an HTML page."));
+        }
+    }
+
+    let raw_bytes = resp.bytes().await?;
+    let raw_html = decompress_br(&raw_bytes);
+    let page = extract_page_text(&raw_html, url);
+
+    const MAX_CHARS: usize = 20_000;
+    let mut out = format!(
+        "Title: {}\nDescription: {}\nURL: {}\n\n{}",
+        page.title, page.description, page.url, page.text
+    );
+    if out.chars().count() > MAX_CHARS {
+        out = out.chars().take(MAX_CHARS).collect::<String>();
+        out.push_str("\n...[content trunacated]...");
+    }
+    Ok(out)
+}
+
+fn extract_page_text(raw_html: &str, url: &str) -> PageContent {
+    let document = Html::parse_document(raw_html);
+    let title = document
+        .select(&Selector::parse("title").unwrap())
+        .next()
+        .map(|n| collapse(n.text().collect::<String>()))
+        .unwrap_or_default();
+
+    let description = document
+        .select(
+            &Selector::parse(r#"meta[name="description"], meta[property="og:description"]"#)
+                .unwrap(),
+        )
+        .next()
+        .and_then(|n| n.value().attr("content"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let container = ["article", "main", "body"]
+        .iter()
+        .find_map(|sel| document.select(&Selector::parse(sel).unwrap()).next());
+
+    let block_selector =
+        Selector::parse("h1, h2, h3, h4, h5, h6, p, li, pre, blockquote, td, dd, dt, figcaption")
+            .unwrap();
+
+    let mut lines: Vec<String> = Vec::new();
+    match container {
+        Some(root) => {
+            for node in root.select(&block_selector) {
+                push_text(&mut lines, &node);
+            }
+        }
+        None => {
+            for node in document.select(&block_selector) {
+                push_text(&mut lines, &node);
+            }
+        }
+    }
+
+    PageContent {
+        title,
+        description,
+        url: url.to_string(),
+        text: lines.join("\n"),
+    }
+}
+
+fn push_text(lines: &mut Vec<String>, node: &ElementRef) {
+    let t = collapse(node.text().collect::<String>());
+    if !t.is_empty() {
+        lines.push(t);
+    }
+}
+
+fn collapse(s: String) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
