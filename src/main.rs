@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
 
     let s3_client = aws_sdk_s3::Client::new(&sdk_config);
 
-    // Download test
+    // Test image download/upload
     // let url = download_and_upload_image(
     //     "https://static.wikia.nocookie.net/supernatural/images/6/6c/Who_We_Are_03.jpg/revision/latest?cb=20170512173320",
     //     &image_client,
@@ -187,6 +187,17 @@ async fn main() -> Result<()> {
     //     &r2_bucket,
     // ).await?;
     // println!("{url}");
+
+    // Test scraping
+    // match web::scrape_url(
+    //     "https://supernatural.fandom.com/wiki/Dean_Winchester",
+    //     &client,
+    // )
+    // .await
+    // {
+    //     Ok(res) => println!("{res}"),
+    //     Err(e) => println!("{e}"),
+    // }
 
     // Add Tracing
     tracing_subscriber::registry()

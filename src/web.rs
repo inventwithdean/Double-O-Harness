@@ -103,6 +103,7 @@ pub struct PageContent {
     pub description: String,
     pub url: String,
     pub text: String,
+    pub image_urls: Vec<String>,
 }
 
 pub async fn scrape_url(url: &str, client: &Client) -> Result<String> {
@@ -129,18 +130,27 @@ pub async fn scrape_url(url: &str, client: &Client) -> Result<String> {
     let page = extract_page_text(&raw_html, url);
 
     const MAX_CHARS: usize = 20_000;
-    let mut out = format!(
-        "Title: {}\nDescription: {}\nURL: {}\n\n{}",
-        page.title, page.description, page.url, page.text
-    );
-    if out.chars().count() > MAX_CHARS {
-        out = out.chars().take(MAX_CHARS).collect::<String>();
-        out.push_str("\n...[content trunacated]...");
+    let mut text_content = page.text;
+    if text_content.chars().count() > MAX_CHARS {
+        text_content = text_content.chars().take(MAX_CHARS).collect::<String>();
+        text_content.push_str("...[content truncated]");
     }
+
+    let images_str = if page.image_urls.is_empty() {
+        "None".to_string()
+    } else {
+        page.image_urls.join("\n")
+    };
+
+    let out = format!(
+        "Title: {}\nDescription: {}\nURL: {}\nImages:\n{}\n\n{}",
+        page.title, page.description, page.url, images_str, text_content
+    );
+
     Ok(out)
 }
 
-fn extract_page_text(raw_html: &str, url: &str) -> PageContent {
+fn extract_page_text(raw_html: &str, page_url: &str) -> PageContent {
     let document = Html::parse_document(raw_html);
     let title = document
         .select(&Selector::parse("title").unwrap())
@@ -158,33 +168,75 @@ fn extract_page_text(raw_html: &str, url: &str) -> PageContent {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    let container = ["article", "main", "body"]
-        .iter()
-        .find_map(|sel| document.select(&Selector::parse(sel).unwrap()).next());
-
     let block_selector =
         Selector::parse("h1, h2, h3, h4, h5, h6, p, li, pre, blockquote, td, dd, dt, figcaption")
             .unwrap();
 
+    let img_selector = Selector::parse("img").unwrap();
+    let base_url = url::Url::parse(page_url).ok();
+
     let mut lines: Vec<String> = Vec::new();
-    match container {
-        Some(root) => {
-            for node in root.select(&block_selector) {
-                push_text(&mut lines, &node);
+    let mut image_urls: Vec<String> = Vec::new();
+
+    let mut extract_content = |root: scraper::ElementRef| {
+        // Extract Text
+        for node in root.select(&block_selector) {
+            push_text(&mut lines, &node);
+        }
+
+        // Extract Images
+        for node in root.select(&img_selector) {
+            let src = node.value().attr("src").unwrap_or("").trim();
+            let data_src = node.value().attr("data-src").unwrap_or("").trim();
+
+            let raw_url = if !data_src.is_empty() && !data_src.starts_with("data:image/") {
+                data_src
+            } else if !src.is_empty() && !src.starts_with("data:image/") {
+                src
+            } else {
+                ""
+            };
+
+            if !raw_url.is_empty() {
+                // Resolve relative paths against base url
+                let resolved = match &base_url {
+                    Some(base) => base
+                        .join(raw_url)
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|_| raw_url.to_string()),
+                    None => raw_url.to_string(),
+                };
+                image_urls.push(resolved);
             }
         }
-        None => {
-            for node in document.select(&block_selector) {
-                push_text(&mut lines, &node);
+    };
+
+    let mut found_containers = false;
+    for sel_str in ["article", "main", "body"] {
+        let selector = Selector::parse(sel_str).unwrap();
+        let nodes: Vec<_> = document.select(&selector).collect();
+        if !nodes.is_empty() {
+            for node in nodes {
+                extract_content(node);
             }
+            found_containers = true;
+            break;
         }
     }
+
+    if !found_containers {
+        extract_content(document.root_element());
+    }
+
+    image_urls.sort();
+    image_urls.dedup();
 
     PageContent {
         title,
         description,
-        url: url.to_string(),
+        url: page_url.to_string(),
         text: lines.join("\n"),
+        image_urls,
     }
 }
 

@@ -25,6 +25,7 @@ tracing-subscriber = { version = "0.3.23", features = [
     "std",
     "fmt",
 ] }
+url = "2.5.8"
 uuid = { version = "1.25.0", features = ["v4", "fast-rng"] }
 wreq = { version = "0.16", features= ["form", "json"] }
 wreq-util = "0.2"
