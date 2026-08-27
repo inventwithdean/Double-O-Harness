@@ -1,239 +1,256 @@
 <script lang="ts">
-    type ToolCall = {
-        index: number;
-        id: string;
-        name: string;
-        args: string;
-        result: string;
-        status: 'streaming' | 'done';
-    };
+	type ToolCall = {
+		index: number;
+		id: string;
+		name: string;
+		args: string;
+		result: string;
+		status: 'streaming' | 'done';
+	};
 
-    type SubMessage = {
-        id: string;
-        content: string;
-        tools: ToolCall[];
-    };
+	type SubMessage = {
+		id: string;
+		content: string;
+		tools: ToolCall[];
+	};
 
-    type TimelineBlock = {
-        id: string;
-        threadId: string;
-        title: string;
-        isMain: boolean;
-        status: 'running' | 'done' | 'error';
-        subMessages: SubMessage[];
-    };
+	type TimelineBlock = {
+		id: string;
+		threadId: string;
+		title: string;
+		isMain: boolean;
+		status: 'running' | 'done' | 'error';
+		subMessages: SubMessage[];
+	};
 
-    type Message = {
-        role: 'user' | 'agent';
-        content: string;
-        turnId?: string;
-        blocks: TimelineBlock[];
-    };
+	type Message = {
+		role: 'user' | 'agent';
+		content: string;
+		turnId?: string;
+		blocks: TimelineBlock[];
+	};
 
-    let sessionId = $state('');
-    let messages = $state<Message[]>([]);
-    let currentInput = $state('');
-    let isThinking = $state(false);
-    
-    // Tracks active threads so we know their titles when they resume
-    let threadMeta = $state<Record<string, { title: string, status: 'running' | 'done' }>>({});
+	let sessionId = $state('');
+	let messages = $state<Message[]>([]);
+	let currentInput = $state('');
+	let isThinking = $state(false);
 
-    // Helper to safely format JSON while it might still be streaming
-    function formatJson(raw: string) {
-        if (!raw) return '{}';
-        try {
-            return JSON.stringify(JSON.parse(raw), null, 2);
-        } catch (e) {
-            return raw; 
-        }
-    }
+	// Tracks active threads so we know their titles when they resume
+	let threadMeta = $state<Record<string, { title: string; status: 'running' | 'done' }>>({});
 
-    // Helper to extract file paths from ```sandbox_artifacts markdown
-    function parseContentBlocks(text: string) {
-        if (!text) return [];
-        
-        const regex = /```sandbox_artifacts\n([\s\S]*?)```/g;
-        const parts = [];
-        let lastIndex = 0;
-        let match;
+	// Helper to safely format JSON while it might still be streaming
+	function formatJson(raw: string) {
+		if (!raw) return '{}';
+		try {
+			return JSON.stringify(JSON.parse(raw), null, 2);
+		} catch (e) {
+			return raw;
+		}
+	}
 
-        while ((match = regex.exec(text)) !== null) {
-            if (match.index > lastIndex) {
-                parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
-            }
-            
-            const linksText = match[1];
-            const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-            const artifacts = [];
-            let linkMatch;
-            
-            while ((linkMatch = linkRegex.exec(linksText)) !== null) {
-                artifacts.push({ name: linkMatch[1], path: linkMatch[2] });
-            }
-            
-            parts.push({ type: 'artifacts', items: artifacts });
-            lastIndex = regex.lastIndex;
-        }
-        
-        if (lastIndex < text.length) {
-            parts.push({ type: 'text', content: text.slice(lastIndex) });
-        }
-        
-        return parts;
-    }
+	// Helper to extract file paths from ```sandbox_artifacts markdown
+	function parseContentBlocks(text: string) {
+		if (!text) return [];
 
-    async function sendMessage() {
-        if (!currentInput.trim()) return;
+		const regex = /```sandbox_artifacts\n([\s\S]*?)```/g;
+		const parts = [];
+		let lastIndex = 0;
+		let match;
 
-        const payload = currentInput;
-        // User message uses standard content
-        messages = [...messages, { role: 'user', content: payload, blocks: [] }];
-        currentInput = '';
-        isThinking = true;
+		while ((match = regex.exec(text)) !== null) {
+			if (match.index > lastIndex) {
+				parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+			}
 
-        // Reset thread metadata for the new turn
-        threadMeta = { 'main': { title: 'Main Agent', status: 'running' } };
+			const linksText = match[1];
+			const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+			const artifacts = [];
+			let linkMatch;
 
-        const agentIdx = messages.length;
-        messages = [...messages, { 
-            role: 'agent', 
-            content: '', 
-            blocks: [] 
-        }];
+			while ((linkMatch = linkRegex.exec(linksText)) !== null) {
+				artifacts.push({ name: linkMatch[1], path: linkMatch[2] });
+			}
 
-        try {
-            const res = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: payload, sessionId })
-            });
+			parts.push({ type: 'artifacts', items: artifacts });
+			lastIndex = regex.lastIndex;
+		}
 
-            if (!res.body) throw new Error('No response body');
+		if (lastIndex < text.length) {
+			parts.push({ type: 'text', content: text.slice(lastIndex) });
+		}
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
+		return parts;
+	}
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    if (buffer.trim()) processLines(buffer);
-                    break;
-                }
-                buffer += decoder.decode(value, { stream: true });
-                const parts = buffer.split('\n\n');
-                buffer = parts.pop() || '';
-                for (const part of parts) processLines(part);
-            }
+	async function sendMessage() {
+		if (!currentInput.trim()) return;
 
-            function processLines(textBlock: string) {
-                const lines = textBlock.split('\n');
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const dataStr = line.slice(6).trim();
-                    if (!dataStr || dataStr === '[DONE]') continue;
+		const payload = currentInput;
+		// User message uses standard content
+		messages = [...messages, { role: 'user', content: payload, blocks: [] }];
+		currentInput = '';
+		isThinking = true;
 
-                    try {
-                        const event = JSON.parse(dataStr);
-                        if (event.type === 'system.session_created') {
-                            sessionId = event.sessionId;
-                            continue;
-                        }
+		// Reset thread metadata for the new turn
+		threadMeta = { main: { title: 'Main Agent', status: 'running' } };
 
-                        let msg = { ...messages[agentIdx] };
-                        const threadId = event.threadId || 'main';
+		const agentIdx = messages.length;
+		messages = [
+			...messages,
+			{
+				role: 'agent',
+				content: '',
+				blocks: []
+			}
+		];
 
-                        // Handle Turn and Thread Lifecycle
-                        if (event.type === 'turn.created') {
-                            msg.turnId = event.turnId;
-                        } 
-                        else if (event.type === 'thread.created') {
-                            threadMeta[event.threadId] = { title: event.title || 'Subagent', status: 'running' };
-                        } 
-                        else if (event.type === 'thread.done') {
-                            if (threadMeta[event.threadId]) threadMeta[event.threadId].status = 'done';
-                            
-                            const lastBlock = msg.blocks[msg.blocks.length - 1];
-                            if (lastBlock && lastBlock.threadId === event.threadId) {
-                                lastBlock.status = 'done';
-                            }
-                        }
-                        
-                        // Timeline Chunk Routing
-                        else if (event.type === 'model.message.delta' || event.type === 'tool.response') {
-                            let lastBlock = msg.blocks[msg.blocks.length - 1];
+		try {
+			const res = await fetch('/api/chat', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ message: payload, sessionId })
+			});
 
-                            // Splitting the timeline if the thread shifted
-                            if (!lastBlock || lastBlock.threadId !== threadId) {
-                                lastBlock = {
-                                    id: Math.random().toString(36).slice(2),
-                                    threadId: threadId,
-                                    title: threadMeta[threadId]?.title || (threadId === 'main' ? 'Main Agent' : 'Subagent'),
-                                    isMain: threadId === 'main',
-                                    status: threadMeta[threadId]?.status || 'running',
-                                    subMessages: []
-                                };
-                                msg.blocks.push(lastBlock);
-                            }
+			if (!res.body) throw new Error('No response body');
 
-                            // Merging message text and tools
-                            if (event.type === 'model.message.delta') {
-                                let sub = lastBlock.subMessages.find(sm => sm.id === event.id);
-                                if (!sub) {
-                                    sub = { id: event.id, content: '', tools: [] };
-                                    lastBlock.subMessages.push(sub);
-                                }
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = '';
 
-                                if (event.content) sub.content += event.content;
-                                
-                                if (event.toolCalls) {
-                                    for (const tc of event.toolCalls) {
-                                        let tool = sub.tools.find(t => t.index === tc.index);
-                                        if (!tool) {
-                                            tool = { index: tc.index, id: tc.id || '', name: tc.function?.name || 'unknown', args: '', result: '', status: 'streaming' };
-                                            sub.tools.push(tool);
-                                        }
-                                        if (tc.id) tool.id = tc.id;
-                                        if (tc.function?.name) tool.name = tc.function.name;
-                                        if (tc.function?.arguments) tool.args += tc.function.arguments;
-                                    }
-                                }
-                            } 
-                            // Resolving tools by scanning backward through blocks
-                            else if (event.type === 'tool.response') {
-                                for (let i = msg.blocks.length - 1; i >= 0; i--) {
-                                    const tool = msg.blocks[i].subMessages.flatMap(sm => sm.tools).find(t => t.id === event.toolCallId);
-                                    if (tool) {
-                                        tool.result = event.content;
-                                        tool.status = 'done';
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) {
+					if (buffer.trim()) processLines(buffer);
+					break;
+				}
+				buffer += decoder.decode(value, { stream: true });
+				const parts = buffer.split('\n\n');
+				buffer = parts.pop() || '';
+				for (const part of parts) processLines(part);
+			}
 
-                        messages[agentIdx] = msg;
-                    } catch (e) {
-                        console.warn('Skipped malformed JSON:', dataStr);
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Chat error:', error);
-            messages[agentIdx].blocks = [{
-                id: 'error',
-                threadId: 'main',
-                title: 'Error',
-                isMain: true,
-                status: 'error',
-                subMessages: [{ id: 'err', content: 'Connection lost.', tools: [] }]
-            }];
-        } finally {
-            isThinking = false;
-        }
-    }
+			function processLines(textBlock: string) {
+				const lines = textBlock.split('\n');
+				for (const line of lines) {
+					if (!line.startsWith('data: ')) continue;
+					const dataStr = line.slice(6).trim();
+					if (!dataStr || dataStr === '[DONE]') continue;
+
+					try {
+						const event = JSON.parse(dataStr);
+						if (event.type === 'system.session_created') {
+							sessionId = event.sessionId;
+							continue;
+						}
+
+						let msg = { ...messages[agentIdx] };
+						const threadId = event.threadId || 'main';
+
+						// Handle Turn and Thread Lifecycle
+						if (event.type === 'turn.created') {
+							msg.turnId = event.turnId;
+						} else if (event.type === 'thread.created') {
+							threadMeta[event.threadId] = { title: event.title || 'Subagent', status: 'running' };
+						} else if (event.type === 'thread.done') {
+							if (threadMeta[event.threadId]) threadMeta[event.threadId].status = 'done';
+
+							// Iterate through all blocks and mark every block belonging to this thread as done
+							for (const block of msg.blocks) {
+								if (block.threadId === event.threadId) {
+									block.status = 'done';
+								}
+							}
+						}
+
+						// Timeline Chunk Routing
+						else if (event.type === 'model.message.delta' || event.type === 'tool.response') {
+							let lastBlock = msg.blocks[msg.blocks.length - 1];
+
+							// Splitting the timeline if the thread shifted
+							if (!lastBlock || lastBlock.threadId !== threadId) {
+								lastBlock = {
+									id: Math.random().toString(36).slice(2),
+									threadId: threadId,
+									title:
+										threadMeta[threadId]?.title ||
+										(threadId === 'main' ? 'Main Agent' : 'Subagent'),
+									isMain: threadId === 'main',
+									status: threadMeta[threadId]?.status || 'running',
+									subMessages: []
+								};
+								msg.blocks.push(lastBlock);
+							}
+
+							// Merging message text and tools
+							if (event.type === 'model.message.delta') {
+								let sub = lastBlock.subMessages.find((sm) => sm.id === event.id);
+								if (!sub) {
+									sub = { id: event.id, content: '', tools: [] };
+									lastBlock.subMessages.push(sub);
+								}
+
+								if (event.content) sub.content += event.content;
+
+								if (event.toolCalls) {
+									for (const tc of event.toolCalls) {
+										let tool = sub.tools.find((t) => t.index === tc.index);
+										if (!tool) {
+											tool = {
+												index: tc.index,
+												id: tc.id || '',
+												name: tc.function?.name || 'unknown',
+												args: '',
+												result: '',
+												status: 'streaming'
+											};
+											sub.tools.push(tool);
+										}
+										if (tc.id) tool.id = tc.id;
+										if (tc.function?.name) tool.name = tc.function.name;
+										if (tc.function?.arguments) tool.args += tc.function.arguments;
+									}
+								}
+							}
+							// Resolving tools by scanning backward through blocks
+							else if (event.type === 'tool.response') {
+								for (let i = msg.blocks.length - 1; i >= 0; i--) {
+									const tool = msg.blocks[i].subMessages
+										.flatMap((sm) => sm.tools)
+										.find((t) => t.id === event.toolCallId);
+									if (tool) {
+										tool.result = event.content;
+										tool.status = 'done';
+										break;
+									}
+								}
+							}
+						}
+
+						messages[agentIdx] = msg;
+					} catch (e) {
+						console.warn('Skipped malformed JSON:', dataStr);
+					}
+				}
+			}
+		} catch (error) {
+			console.error('Chat error:', error);
+			messages[agentIdx].blocks = [
+				{
+					id: 'error',
+					threadId: 'main',
+					title: 'Error',
+					isMain: true,
+					status: 'error',
+					subMessages: [{ id: 'err', content: 'Connection lost.', tools: [] }]
+				}
+			];
+		} finally {
+			isThinking = false;
+		}
+	}
 </script>
 
+<!-- The HTML template remains exactly the same -->
 <div class="flex h-screen flex-col bg-gray-900 p-4 font-sans text-gray-100">
 	<h1 class="mb-6 text-3xl font-bold tracking-wider text-red-500">Double-O-Harness</h1>
 
