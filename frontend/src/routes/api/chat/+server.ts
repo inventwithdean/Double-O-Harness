@@ -1,8 +1,9 @@
 import { TrueForge } from '@truefoundry/trueforge-sdk';
 
 export async function POST({ request }) {
-    // Extract sessionId from the incoming request
-    const { message, sessionId } = await request.json();
+    // Extract sessionId, standard message, and toolResponse from the request
+    const payload = await request.json();
+    const { message, sessionId, toolResponse } = payload;
 
     const stream = new ReadableStream({
         async start(controller) {
@@ -21,15 +22,18 @@ export async function POST({ request }) {
                     });
                     activeSessionId = session.id;
 
-                    // Send a custom SSE event to tell the frontend our new sessionId
                     const sessionEvent = JSON.stringify({ type: 'system.session_created', sessionId: activeSessionId });
                     controller.enqueue(new TextEncoder().encode(`data: ${sessionEvent}\n\n`));
                 }
 
+                // If we receive a toolResponse, pass it as a user.tool_response.
+                // Otherwise, treat it as a standard user.message.
+                const input = toolResponse 
+                    ? [toolResponse] 
+                    : [{ type: 'user.message', content: message }];
+
                 // Start the Turn Stream using the active session
-                const turnStream = await client.sessions.createTurnStream(activeSessionId, {
-                    input: [{ type: 'user.message', content: message }],
-                });
+                const turnStream = await client.sessions.createTurnStream(activeSessionId, { input });
 
                 // Stream events to the frontend
                 for await (const { data: event } of turnStream.withMetadata()) {
