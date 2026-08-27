@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { marked } from 'marked';
+	import DOMPurify from 'isomorphic-dompurify';
 
 	type ToolCall = {
 		index: number;
@@ -122,36 +123,36 @@
 	}
 
 	async function sendToolResponse(content: string) {
-        if (!pendingQuestion || !content.trim()) return;
-        
-        const payload = {
-            type: 'user.tool_response',
-            threadId: pendingQuestion.threadId,
-            toolCallId: pendingQuestion.toolCallId,
-            content
-        };
+		if (!pendingQuestion || !content.trim()) return;
 
-        // Visually add the user's choice to the chat
-        messages = [...messages, { role: 'user', content, blocks: [] }];
-        
-        for (const msg of messages) {
-            for (const block of msg.blocks) {
-                for (const sub of block.subMessages) {
-                    const tool = sub.tools.find(t => t.id === pendingQuestion?.toolCallId);
-                    if (tool) {
-                        tool.status = 'done';
-                        tool.result = JSON.stringify({ user_response: content }, null, 2);
-                    }
-                }
-            }
-        }
-        
-        // Reset state
-        pendingQuestion = null;
-        customAnswer = '';
-        
-        await triggerTurn({ toolResponse: payload });
-    }
+		const payload = {
+			type: 'user.tool_response',
+			threadId: pendingQuestion.threadId,
+			toolCallId: pendingQuestion.toolCallId,
+			content
+		};
+
+		// Visually add the user's choice to the chat
+		messages = [...messages, { role: 'user', content, blocks: [] }];
+
+		for (const msg of messages) {
+			for (const block of msg.blocks) {
+				for (const sub of block.subMessages) {
+					const tool = sub.tools.find((t) => t.id === pendingQuestion?.toolCallId);
+					if (tool) {
+						tool.status = 'done';
+						tool.result = JSON.stringify({ user_response: content }, null, 2);
+					}
+				}
+			}
+		}
+
+		// Reset state
+		pendingQuestion = null;
+		customAnswer = '';
+
+		await triggerTurn({ toolResponse: payload });
+	}
 
 	async function triggerTurn(requestBody: any) {
 		isThinking = true;
@@ -440,7 +441,7 @@
 																<div
 																	class="prose prose-sm max-w-none text-[15px] leading-relaxed break-words prose-slate"
 																>
-																	{@html marked.parse(contentBlock.content)}
+																	{@html DOMPurify.sanitize(marked.parse(contentBlock.content))}
 																</div>
 															{:else if contentBlock.type === 'artifacts'}
 																<!-- Artifact Cards -->
