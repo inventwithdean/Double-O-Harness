@@ -151,6 +151,8 @@
 		// Reset state
 		pendingQuestion = null;
 		customAnswer = '';
+
+		await triggerTurn({toolResponse: payload})
 	}
 
 	async function triggerTurn(requestBody: any) {
