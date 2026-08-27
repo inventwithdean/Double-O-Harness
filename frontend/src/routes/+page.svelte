@@ -152,7 +152,7 @@
 		pendingQuestion = null;
 		customAnswer = '';
 
-		await triggerTurn({toolResponse: payload})
+		await triggerTurn({ toolResponse: payload });
 	}
 
 	async function triggerTurn(requestBody: any) {
@@ -335,6 +335,13 @@
 			isThinking = false;
 		}
 	}
+	function startNewChat() {
+		sessionId = '';
+		messages = [];
+		pendingQuestion = null;
+		customAnswer = '';
+		threadMeta = {};
+	}
 </script>
 
 <div
@@ -342,22 +349,42 @@
 >
 	<div class="flex h-full w-full max-w-4xl flex-col p-4 md:p-6 lg:px-8 lg:py-6">
 		<!-- Header -->
-		<header class="mb-5 flex shrink-0 items-center justify-between pl-2">
-			<h1 class="text-xl font-bold tracking-tight text-slate-900">
-				Double-O<span class="font-medium text-slate-400">-Harness</span>
-			</h1>
-			<div
-				class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold tracking-wider text-slate-500 uppercase shadow-sm"
-			>
-				<span class="relative flex h-2 w-2">
-					<span
-						class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
-					></span>
-					<span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-				</span>
-				Active
-			</div>
-		</header>
+		<!-- Header -->
+        <header class="mb-5 flex shrink-0 items-center justify-between pl-2">
+            
+            <!-- Left side: Clean Title -->
+            <h1 class="text-xl font-bold tracking-tight text-slate-900">
+                Double-O<span class="font-medium text-slate-400">-Harness</span>
+            </h1>
+
+            <!-- Right side: Actions & Status -->
+            <div class="flex items-center gap-3">
+                <!-- New Chat Button -->
+                <button
+                    onclick={startNewChat}
+                    title="New Chat"
+                    class="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wider text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    New
+                </button>
+
+                <!-- OSINT Badge -->
+                <div
+                    class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold tracking-wider text-slate-500 uppercase shadow-sm"
+                >
+                    <span class="relative flex h-2 w-2">
+                        <span
+                            class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
+                        ></span>
+                        <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                    </span>
+                    OSINT
+                </div>
+            </div>
+        </header>
 
 		<!-- Chat History -->
 		<div
