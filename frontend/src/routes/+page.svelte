@@ -24,6 +24,7 @@
 		title: string;
 		isMain: boolean;
 		status: 'running' | 'done' | 'error';
+		open: boolean;
 		subMessages: SubMessage[];
 	};
 
@@ -150,8 +151,6 @@
 		// Reset state
 		pendingQuestion = null;
 		customAnswer = '';
-
-		await triggerTurn({ toolResponse: payload });
 	}
 
 	async function triggerTurn(requestBody: any) {
@@ -160,6 +159,7 @@
 		scrollToBottom();
 
 		threadMeta = { main: { title: 'Main Agent', status: 'running' } };
+
 		const agentIdx = messages.length;
 		messages = [...messages, { role: 'agent', content: '', blocks: [] }];
 
@@ -202,7 +202,6 @@
 						if (event.type === 'tool.response_required') {
 							for (const ref of event.toolCalls) {
 								let foundTool;
-								// Scan existing blocks to find the tool call details
 								for (const block of messages[agentIdx].blocks) {
 									for (const sub of block.subMessages) {
 										foundTool = sub.tools.find((t) => t.id === ref.id);
@@ -226,7 +225,7 @@
 									}
 								}
 							}
-							continue; // Skip normal block processing for this event
+							continue;
 						}
 
 						if (event.type === 'system.session_created') {
@@ -241,17 +240,21 @@
 							msg.turnId = event.turnId;
 						} else if (event.type === 'thread.created') {
 							threadMeta[event.threadId] = { title: event.title || 'Subagent', status: 'running' };
+							for (const block of msg.blocks) {
+								if (block.threadId === 'main') block.open = false;
+							}
 						} else if (event.type === 'thread.done') {
 							if (threadMeta[event.threadId]) threadMeta[event.threadId].status = 'done';
 							for (const block of msg.blocks) {
 								if (block.threadId === event.threadId) {
 									block.status = 'done';
+									block.open = false;
 								}
 							}
 						} else if (event.type === 'model.message.delta' || event.type === 'tool.response') {
-							let lastBlock = msg.blocks[msg.blocks.length - 1];
-							if (!lastBlock || lastBlock.threadId !== threadId) {
-								lastBlock = {
+							let block = msg.blocks.find((b) => b.threadId === threadId && b.open);
+							if (!block) {
+								block = {
 									id: Math.random().toString(36).slice(2),
 									threadId: threadId,
 									title:
@@ -259,16 +262,17 @@
 										(threadId === 'main' ? 'Main Agent' : 'Subagent'),
 									isMain: threadId === 'main',
 									status: threadMeta[threadId]?.status || 'running',
+									open: true,
 									subMessages: []
 								};
-								msg.blocks.push(lastBlock);
+								msg.blocks.push(block);
 							}
 
 							if (event.type === 'model.message.delta') {
-								let sub = lastBlock.subMessages.find((sm) => sm.id === event.id);
+								let sub = block.subMessages.find((sm) => sm.id === event.id);
 								if (!sub) {
 									sub = { id: event.id, content: '', tools: [] };
-									lastBlock.subMessages.push(sub);
+									block.subMessages.push(sub);
 								}
 								if (event.content) sub.content += event.content;
 								if (event.toolCalls) {
@@ -291,8 +295,8 @@
 									}
 								}
 							} else if (event.type === 'tool.response') {
-								for (let i = msg.blocks.length - 1; i >= 0; i--) {
-									const tool = msg.blocks[i].subMessages
+								for (const b of msg.blocks) {
+									const tool = b.subMessages
 										.flatMap((sm) => sm.tools)
 										.find((t) => t.id === event.toolCallId);
 									if (tool) {
@@ -320,6 +324,7 @@
 					title: 'Error',
 					isMain: true,
 					status: 'error',
+					open: false,
 					subMessages: [{ id: 'err', content: 'Connection lost.', tools: [] }]
 				}
 			];
