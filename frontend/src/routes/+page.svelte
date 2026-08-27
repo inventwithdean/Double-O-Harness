@@ -47,8 +47,9 @@
 	let currentInput = $state('');
 	let isThinking = $state(false);
 
-	let pendingQuestion = $state<PendingQuestion | null>(null);
-	let customAnswer = $state('');
+	let pendingQuestions = $state<PendingQuestion[]>([]);
+	let accumulatedResponses = $state<any[]>([]);
+	let customAnswers = $state<Record<string, string>>({});
 
 	// Scroll Management
 	let chatContainer = $state<HTMLDivElement | null>(null);
@@ -123,37 +124,44 @@
 		await triggerTurn({ message: payload });
 	}
 
-	async function sendToolResponse(content: string) {
-		if (!pendingQuestion || !content.trim()) return;
+	async function sendToolResponse(toolCallId: string, content: string) {
+        const q = pendingQuestions.find(q => q.toolCallId === toolCallId);
+        if (!q || !content.trim()) return;
 
-		const payload = {
-			type: 'user.tool_response',
-			threadId: pendingQuestion.threadId,
-			toolCallId: pendingQuestion.toolCallId,
-			content
-		};
+        // Add to our payload batch
+        accumulatedResponses.push({
+            type: 'user.tool_response',
+            threadId: q.threadId,
+            toolCallId: q.toolCallId,
+            content
+        });
 
-		// Visually add the user's choice to the chat
-		messages = [...messages, { role: 'user', content, blocks: [] }];
+        // Visually add the user's choice to the chat
+        messages = [...messages, { role: 'user', content, blocks: [] }];
 
-		for (const msg of messages) {
-			for (const block of msg.blocks) {
-				for (const sub of block.subMessages) {
-					const tool = sub.tools.find((t) => t.id === pendingQuestion?.toolCallId);
-					if (tool) {
-						tool.status = 'done';
-						tool.result = JSON.stringify({ user_response: content }, null, 2);
-					}
-				}
-			}
-		}
+        for (const msg of messages) {
+            for (const block of msg.blocks) {
+                for (const sub of block.subMessages) {
+                    const tool = sub.tools.find((t) => t.id === toolCallId);
+                    if (tool) {
+                        tool.status = 'done';
+                        tool.result = JSON.stringify({ user_response: content }, null, 2);
+                    }
+                }
+            }
+        }
 
-		// Reset state
-		pendingQuestion = null;
-		customAnswer = '';
+        // Remove the answered question from the pending list
+        pendingQuestions = pendingQuestions.filter(p => p.toolCallId !== toolCallId);
+        delete customAnswers[toolCallId];
 
-		await triggerTurn({ toolResponse: payload });
-	}
+        // If all questions are answered, send the batch to the backend
+        if (pendingQuestions.length === 0) {
+            const payload = [...accumulatedResponses];
+            accumulatedResponses = []; // Reset for the next batch
+            await triggerTurn({ toolResponse: payload });
+        }
+    }
 
 	async function triggerTurn(requestBody: any) {
 		isThinking = true;
@@ -201,34 +209,41 @@
 						const event = JSON.parse(dataStr);
 
 						// Intercept tool.response_required
-						if (event.type === 'tool.response_required') {
-							for (const ref of event.toolCalls) {
-								let foundTool;
-								for (const block of messages[agentIdx].blocks) {
-									for (const sub of block.subMessages) {
-										foundTool = sub.tools.find((t) => t.id === ref.id);
-										if (foundTool) break;
-									}
-									if (foundTool) break;
-								}
+                        if (event.type === 'tool.response_required') {
+                            const newQuestions = [];
+                            
+                            for (const ref of event.toolCalls) {
+                                let foundTool;
+                                for (const block of messages[agentIdx].blocks) {
+                                    for (const sub of block.subMessages) {
+                                        foundTool = sub.tools.find((t) => t.id === ref.id);
+                                        if (foundTool) break;
+                                    }
+                                    if (foundTool) break;
+                                }
 
-								if (foundTool && foundTool.name === 'ask_user_question') {
-									try {
-										const args = JSON.parse(foundTool.args || '{}');
-										pendingQuestion = {
-											threadId: event.threadId,
-											toolCallId: ref.id,
-											question: args.question || 'Please select an option or provide details:',
-											options: args.options || []
-										};
-										scrollToBottom();
-									} catch (e) {
-										console.warn('Failed to parse question arguments');
-									}
-								}
-							}
-							continue;
-						}
+                                if (foundTool && foundTool.name === 'ask_user_question') {
+                                    try {
+                                        const args = JSON.parse(foundTool.args || '{}');
+                                        newQuestions.push({
+                                            threadId: event.threadId,
+                                            toolCallId: ref.id,
+                                            question: args.question || 'Please select an option:',
+                                            options: args.options || []
+                                        });
+                                    } catch (e) {
+                                        console.warn('Failed to parse question arguments');
+                                    }
+                                }
+                            }
+                            
+                            if (newQuestions.length > 0) {
+                                pendingQuestions = newQuestions;
+                                accumulatedResponses = [];
+                                scrollToBottom();
+                            }
+                            continue;
+                        }
 
 						if (event.type === 'system.session_created') {
 							sessionId = event.sessionId;
@@ -338,8 +353,8 @@
 	function startNewChat() {
 		sessionId = '';
 		messages = [];
-		pendingQuestion = null;
-		customAnswer = '';
+		pendingQuestions = [];
+		customAnswers = {};
 		threadMeta = {};
 	}
 </script>
@@ -349,42 +364,49 @@
 >
 	<div class="flex h-full w-full max-w-4xl flex-col p-4 md:p-6 lg:px-8 lg:py-6">
 		<!-- Header -->
-		<!-- Header -->
-        <header class="mb-5 flex shrink-0 items-center justify-between pl-2">
-            
-            <!-- Left side: Clean Title -->
-            <h1 class="text-xl font-bold tracking-tight text-slate-900">
-                Double-O<span class="font-medium text-slate-400">-Harness</span>
-            </h1>
+		<header class="mb-5 flex shrink-0 items-center justify-between pl-2">
+			<!-- Left side: Clean Title -->
+			<h1 class="text-xl font-bold tracking-tight text-slate-900">
+				Double-O<span class="font-medium text-slate-400">-Harness</span>
+			</h1>
 
-            <!-- Right side: Actions & Status -->
-            <div class="flex items-center gap-3">
-                <!-- New Chat Button -->
-                <button
-                    onclick={startNewChat}
-                    title="New Chat"
-                    class="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wider text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
-                >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 5v14M5 12h14"/>
-                    </svg>
-                    New
-                </button>
+			<!-- Right side: Actions & Status -->
+			<div class="flex items-center gap-3">
+				<!-- New Chat Button -->
+				<button
+					onclick={startNewChat}
+					title="New Chat"
+					class="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold tracking-wider text-slate-500 uppercase shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M12 5v14M5 12h14" />
+					</svg>
+					New
+				</button>
 
-                <!-- OSINT Badge -->
-                <div
-                    class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold tracking-wider text-slate-500 uppercase shadow-sm"
-                >
-                    <span class="relative flex h-2 w-2">
-                        <span
-                            class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
-                        ></span>
-                        <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                    </span>
-                    OSINT
-                </div>
-            </div>
-        </header>
+				<!-- OSINT Badge -->
+				<div
+					class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold tracking-wider text-slate-500 uppercase shadow-sm"
+				>
+					<span class="relative flex h-2 w-2">
+						<span
+							class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
+						></span>
+						<span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+					</span>
+					OSINT
+				</div>
+			</div>
+		</header>
 
 		<!-- Chat History -->
 		<div
@@ -690,59 +712,67 @@
 
 		<!-- Dynamic Input Area -->
 		<div class="mt-5 shrink-0 pb-2">
-			{#if pendingQuestion}
-				<!-- Interactive Action Request Panel -->
-				<div
-					class="animate-in fade-in slide-in-from-bottom-2 flex flex-col gap-4 rounded-2xl border-2 border-indigo-200 bg-indigo-50/40 p-5 shadow-sm transition-all"
-				>
-					<div class="flex items-center gap-2.5 text-sm font-bold text-indigo-800">
-						<svg
-							class="h-5 w-5 text-indigo-500"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
+			{#if pendingQuestions && pendingQuestions.length > 0}
+				<!-- Wrapper for multiple pending questions -->
+				<div class="flex flex-col gap-4">
+					{#each pendingQuestions as question}
+						<!-- Interactive Action Request Panel -->
+						<div
+							class="animate-in fade-in slide-in-from-bottom-2 flex flex-col gap-4 rounded-2xl border-2 border-indigo-200 bg-indigo-50/40 p-5 shadow-sm transition-all"
 						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-							/>
-						</svg>
-						{pendingQuestion.question}
-					</div>
-
-					{#if pendingQuestion.options && pendingQuestion.options.length > 0}
-						<div class="flex flex-wrap gap-2">
-							{#each pendingQuestion.options as opt}
-								<button
-									onclick={() => sendToolResponse(opt)}
-									disabled={isThinking}
-									class="rounded-xl border border-indigo-200 bg-white px-4 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 active:scale-95 disabled:opacity-50"
+							<div class="flex items-center gap-2.5 text-sm font-bold text-indigo-800">
+								<svg
+									class="h-5 w-5 text-indigo-500"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
 								>
-									{opt}
-								</button>
-							{/each}
-						</div>
-					{/if}
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+									/>
+								</svg>
+								{question.question}
+							</div>
 
-					<div class="flex items-center gap-2">
-						<input
-							type="text"
-							bind:value={customAnswer}
-							onkeydown={(e) => e.key === 'Enter' && sendToolResponse(customAnswer)}
-							disabled={isThinking}
-							placeholder="Or type a custom response..."
-							class="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 transition-all outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 disabled:opacity-50"
-						/>
-						<button
-							onclick={() => sendToolResponse(customAnswer)}
-							disabled={isThinking || !customAnswer.trim()}
-							class="flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white transition-all hover:bg-indigo-500 disabled:pointer-events-none disabled:opacity-30"
-						>
-							Send
-						</button>
-					</div>
+							{#if question.options && question.options.length > 0}
+								<div class="flex flex-wrap gap-2">
+									{#each question.options as opt}
+										<button
+											onclick={() => sendToolResponse(question.toolCallId, opt)}
+											disabled={isThinking}
+											class="rounded-xl border border-indigo-200 bg-white px-4 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 active:scale-95 disabled:opacity-50"
+										>
+											{opt}
+										</button>
+									{/each}
+								</div>
+							{/if}
+
+							<div class="flex items-center gap-2">
+								<input
+									type="text"
+									bind:value={customAnswers[question.toolCallId]}
+									onkeydown={(e) =>
+										e.key === 'Enter' &&
+										sendToolResponse(question.toolCallId, customAnswers[question.toolCallId] || '')}
+									disabled={isThinking}
+									placeholder="Or type a custom response..."
+									class="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 transition-all outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 disabled:opacity-50"
+								/>
+								<button
+									onclick={() =>
+										sendToolResponse(question.toolCallId, customAnswers[question.toolCallId] || '')}
+									disabled={isThinking || !customAnswers[question.toolCallId]?.trim()}
+									class="flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white transition-all hover:bg-indigo-500 disabled:pointer-events-none disabled:opacity-30"
+								>
+									Send
+								</button>
+							</div>
+						</div>
+					{/each}
 				</div>
 			{:else}
 				<!-- Standard Input Box -->

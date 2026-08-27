@@ -29,7 +29,7 @@ export async function POST({ request }) {
                 // If we receive a toolResponse, pass it as a user.tool_response.
                 // Otherwise, treat it as a standard user.message.
                 const input = toolResponse 
-                    ? [toolResponse] 
+                    ? toolResponse
                     : [{ type: 'user.message', content: message }];
 
                 // Start the Turn Stream using the active session
