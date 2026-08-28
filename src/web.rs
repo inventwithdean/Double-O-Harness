@@ -50,7 +50,7 @@ fn get_structured_web_search_result(raw_html: &str) -> Result<Vec<WebSearchResul
     Ok(search_results)
 }
 
-/// Decompresses brotli bytes to string
+/// Decompresses brotli, gzip or deflate encodings
 fn decompress_payload(raw_bytes: &[u8], encoding: &str) -> String {
     let mut raw_html = String::new();
 
