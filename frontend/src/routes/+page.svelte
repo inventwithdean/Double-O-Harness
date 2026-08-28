@@ -429,6 +429,7 @@
 		messages = [];
 		pendingQuestions = [];
 		pendingApprovals = [];
+		accumulatedResponses = [];
 		customAnswers = {};
 		threadMeta = {};
 	}
@@ -840,8 +841,7 @@
 						</div>
 					{/each}
 				</div>
-			{/if}
-			{#if pendingQuestions && pendingQuestions.length > 0}
+			{:else if pendingQuestions && pendingQuestions.length > 0}
 				<!-- Wrapper for multiple pending questions -->
 				<div class="flex flex-col gap-4">
 					{#each pendingQuestions as question}
