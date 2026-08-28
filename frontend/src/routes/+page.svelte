@@ -42,12 +42,20 @@
 		options: string[];
 	};
 
+	type PendingApproval = {
+		threadId: string;
+		toolCallId: string;
+		toolName: string;
+		toolArgs: string;
+	};
+
 	let sessionId = $state('');
 	let messages = $state<Message[]>([]);
 	let currentInput = $state('');
 	let isThinking = $state(false);
 
 	let pendingQuestions = $state<PendingQuestion[]>([]);
+	let pendingApprovals = $state<PendingApproval[]>([]);
 	let accumulatedResponses = $state<any[]>([]);
 	let customAnswers = $state<Record<string, string>>({});
 
@@ -125,43 +133,81 @@
 	}
 
 	async function sendToolResponse(toolCallId: string, content: string) {
-        const q = pendingQuestions.find(q => q.toolCallId === toolCallId);
-        if (!q || !content.trim()) return;
+		const q = pendingQuestions.find((q) => q.toolCallId === toolCallId);
+		if (!q || !content.trim()) return;
 
-        // Add to our payload batch
-        accumulatedResponses.push({
-            type: 'user.tool_response',
-            threadId: q.threadId,
-            toolCallId: q.toolCallId,
-            content
-        });
+		// Add to our payload batch
+		accumulatedResponses.push({
+			type: 'user.tool_response',
+			threadId: q.threadId,
+			toolCallId: q.toolCallId,
+			content
+		});
 
-        // Visually add the user's choice to the chat
-        messages = [...messages, { role: 'user', content, blocks: [] }];
+		// Visually add the user's choice to the chat
+		messages = [...messages, { role: 'user', content, blocks: [] }];
 
-        for (const msg of messages) {
-            for (const block of msg.blocks) {
-                for (const sub of block.subMessages) {
-                    const tool = sub.tools.find((t) => t.id === toolCallId);
-                    if (tool) {
-                        tool.status = 'done';
-                        tool.result = JSON.stringify({ user_response: content }, null, 2);
-                    }
-                }
-            }
-        }
+		for (const msg of messages) {
+			for (const block of msg.blocks) {
+				for (const sub of block.subMessages) {
+					const tool = sub.tools.find((t) => t.id === toolCallId);
+					if (tool) {
+						tool.status = 'done';
+						tool.result = JSON.stringify({ user_response: content }, null, 2);
+					}
+				}
+			}
+		}
 
-        // Remove the answered question from the pending list
-        pendingQuestions = pendingQuestions.filter(p => p.toolCallId !== toolCallId);
-        delete customAnswers[toolCallId];
+		// Remove the answered question from the pending list
+		pendingQuestions = pendingQuestions.filter((p) => p.toolCallId !== toolCallId);
+		delete customAnswers[toolCallId];
 
-        // If all questions are answered, send the batch to the backend
-        if (pendingQuestions.length === 0) {
-            const payload = [...accumulatedResponses];
-            accumulatedResponses = []; // Reset for the next batch
-            await triggerTurn({ toolResponse: payload });
-        }
-    }
+		// If all questions are answered, send the batch to the backend
+		if (pendingQuestions.length === 0 && pendingApprovals.length === 0) {
+			const payload = [...accumulatedResponses];
+			accumulatedResponses = []; // Reset for the next batch
+			await triggerTurn({ toolResponse: payload });
+		}
+	}
+
+	async function sendToolApproval(toolCallId: string, status: 'allow' | 'deny', reason?: string) {
+		const pending = pendingApprovals.find((p) => p.toolCallId === toolCallId);
+		if (!pending) return;
+
+		accumulatedResponses.push({
+			type: 'user.tool_approval',
+			threadId: pending.threadId,
+			toolCallId: pending.toolCallId,
+			approval:
+				status === 'allow'
+					? { status: 'allow' }
+					: { status: 'deny', reason: reason || 'Denied by user.' }
+		});
+
+		// Visually update the tool call status in the chat log
+		for (const msg of messages) {
+			for (const block of msg.blocks) {
+				for (const sub of block.subMessages) {
+					const tool = sub.tools.find((t) => t.id === toolCallId);
+					if (tool) {
+						tool.status = 'done';
+						tool.result = JSON.stringify({ approval_status: status, reason }, null, 2);
+					}
+				}
+			}
+		}
+
+		// Remove from pending list
+		pendingApprovals = pendingApprovals.filter((p) => p.toolCallId !== toolCallId);
+
+		// If all questions AND approvals are done, send the batch
+		if (pendingQuestions.length === 0 && pendingApprovals.length === 0) {
+			const payload = [...accumulatedResponses];
+			accumulatedResponses = [];
+			await triggerTurn({ toolResponse: payload });
+		}
+	}
 
 	async function triggerTurn(requestBody: any) {
 		isThinking = true;
@@ -207,43 +253,71 @@
 
 					try {
 						const event = JSON.parse(dataStr);
+						if (event.type === 'tool.approval_required') {
+							const newApprovals = [];
+							for (const ref of event.toolCalls) {
+								let foundTool;
+								for (const block of messages[agentIdx].blocks) {
+									for (const sub of block.subMessages) {
+										foundTool = sub.tools.find((t) => t.id === ref.id);
+										if (foundTool) break;
+									}
+									if (foundTool) break;
+								}
 
+								if (foundTool) {
+									newApprovals.push({
+										threadId: event.threadId,
+										toolCallId: ref.id,
+										toolName: foundTool.name,
+										toolArgs: foundTool.args
+									});
+								}
+							}
+
+							if (newApprovals.length > 0) {
+								pendingApprovals = [...pendingApprovals, ...newApprovals];
+								accumulatedResponses = [];
+								scrollToBottom();
+							}
+							continue;
+						}
 						// Intercept tool.response_required
-                        if (event.type === 'tool.response_required') {
-                            const newQuestions = [];
-                            
-                            for (const ref of event.toolCalls) {
-                                let foundTool;
-                                for (const block of messages[agentIdx].blocks) {
-                                    for (const sub of block.subMessages) {
-                                        foundTool = sub.tools.find((t) => t.id === ref.id);
-                                        if (foundTool) break;
-                                    }
-                                    if (foundTool) break;
-                                }
+						if (event.type === 'tool.response_required') {
+							const newQuestions = [];
 
-                                if (foundTool && foundTool.name === 'ask_user_question') {
-                                    try {
-                                        const args = JSON.parse(foundTool.args || '{}');
-                                        newQuestions.push({
-                                            threadId: event.threadId,
-                                            toolCallId: ref.id,
-                                            question: args.question || 'Please select an option:',
-                                            options: args.options || []
-                                        });
-                                    } catch (e) {
-                                        console.warn('Failed to parse question arguments');
-                                    }
-                                }
-                            }
-                            
-                            if (newQuestions.length > 0) {
-                                pendingQuestions = newQuestions;
-                                accumulatedResponses = [];
-                                scrollToBottom();
-                            }
-                            continue;
-                        }
+							for (const ref of event.toolCalls) {
+								let foundTool;
+								for (const block of messages[agentIdx].blocks) {
+									for (const sub of block.subMessages) {
+										foundTool = sub.tools.find((t) => t.id === ref.id);
+										if (foundTool) break;
+									}
+									if (foundTool) break;
+								}
+
+								if (foundTool && foundTool.name === 'ask_user_question') {
+									try {
+										const args = JSON.parse(foundTool.args || '{}');
+										newQuestions.push({
+											threadId: event.threadId,
+											toolCallId: ref.id,
+											question: args.question || 'Please select an option:',
+											options: args.options || []
+										});
+									} catch (e) {
+										console.warn('Failed to parse question arguments');
+									}
+								}
+							}
+
+							if (newQuestions.length > 0) {
+								pendingQuestions = newQuestions;
+								accumulatedResponses = [];
+								scrollToBottom();
+							}
+							continue;
+						}
 
 						if (event.type === 'system.session_created') {
 							sessionId = event.sessionId;
@@ -354,6 +428,7 @@
 		sessionId = '';
 		messages = [];
 		pendingQuestions = [];
+		pendingApprovals = [];
 		customAnswers = {};
 		threadMeta = {};
 	}
@@ -712,6 +787,60 @@
 
 		<!-- Dynamic Input Area -->
 		<div class="mt-5 shrink-0 pb-2">
+			{#if pendingApprovals && pendingApprovals.length > 0}
+				<div class="mb-4 flex flex-col gap-4">
+					{#each pendingApprovals as approval}
+						<div
+							class="animate-in fade-in slide-in-from-bottom-2 flex flex-col gap-4 rounded-2xl border-2 border-amber-200 bg-amber-50/40 p-5 shadow-sm transition-all"
+						>
+							<div class="flex items-center gap-2.5 text-sm font-bold text-amber-800">
+								<svg
+									class="h-5 w-5 text-amber-500"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+									/>
+								</svg>
+								Action Approval Required:
+								<span class="font-mono text-amber-600">{approval.toolName}</span>
+							</div>
+
+							<div class="rounded-xl border border-amber-200/60 bg-white p-3">
+								<div class="mb-1 text-[10px] font-bold tracking-wider text-amber-500/80 uppercase">
+									Arguments
+								</div>
+								<pre
+									class="custom-scrollbar w-fit min-w-full overflow-x-auto font-mono text-[11px] break-all text-amber-900">{formatJson(
+										approval.toolArgs
+									)}</pre>
+							</div>
+
+							<div class="flex gap-2 pt-1">
+								<button
+									onclick={() => sendToolApproval(approval.toolCallId, 'allow')}
+									disabled={isThinking}
+									class="flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] font-bold text-emerald-700 shadow-sm transition-all hover:bg-emerald-100 active:scale-95 disabled:opacity-50"
+								>
+									Approve Action
+								</button>
+								<button
+									onclick={() => sendToolApproval(approval.toolCallId, 'deny')}
+									disabled={isThinking}
+									class="flex-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] font-bold text-red-700 shadow-sm transition-all hover:bg-red-100 active:scale-95 disabled:opacity-50"
+								>
+									Deny
+								</button>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 			{#if pendingQuestions && pendingQuestions.length > 0}
 				<!-- Wrapper for multiple pending questions -->
 				<div class="flex flex-col gap-4">

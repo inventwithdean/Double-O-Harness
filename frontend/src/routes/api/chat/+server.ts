@@ -18,7 +18,25 @@ export async function POST({ request }) {
                 // Create a session if there isn't one.
                 if (!activeSessionId) {
                     const { data: session } = await client.sessions.create({
-                        agent: { name: 'mi6' }
+                        agent: {
+                            spec: {
+                                model: { name: 'deepseek/deepseek-v4-flash' },
+                                mcpServers: [
+                                    {
+                                        name: 'web_search',
+                                        enableTools: ["@all"],
+                                        requireApprovalForTools: ["download_image"],
+                                        preload: true
+                                    }
+                                ],
+                                config: {
+                                    sandbox: { enabled: true },
+                                    generativeUi: { enabled: false },
+                                    askUserQuestions: { enabled: true },
+                                    dynamicSubAgents: { enabled: true },
+                                }
+                            }
+                        }
                     });
                     activeSessionId = session.id;
 
@@ -28,7 +46,7 @@ export async function POST({ request }) {
 
                 // If we receive a toolResponse, pass it as a user.tool_response.
                 // Otherwise, treat it as a standard user.message.
-                const input = toolResponse 
+                const input = toolResponse
                     ? toolResponse
                     : [{ type: 'user.message', content: message }];
 
