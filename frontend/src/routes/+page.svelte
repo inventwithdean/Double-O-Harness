@@ -164,11 +164,7 @@
 		delete customAnswers[toolCallId];
 
 		// If all questions are answered, send the batch to the backend
-		if (pendingQuestions.length === 0 && pendingApprovals.length === 0) {
-			const payload = [...accumulatedResponses];
-			accumulatedResponses = []; // Reset for the next batch
-			await triggerTurn({ toolResponse: payload });
-		}
+		checkAndSendPayload();
 	}
 
 	async function sendToolApproval(toolCallId: string, status: 'allow' | 'deny', reason?: string) {
@@ -202,11 +198,7 @@
 		pendingApprovals = pendingApprovals.filter((p) => p.toolCallId !== toolCallId);
 
 		// If all questions AND approvals are done, send the batch
-		if (pendingQuestions.length === 0 && pendingApprovals.length === 0) {
-			const payload = [...accumulatedResponses];
-			accumulatedResponses = [];
-			await triggerTurn({ toolResponse: payload });
-		}
+		checkAndSendPayload();
 	}
 
 	async function triggerTurn(requestBody: any) {
@@ -214,10 +206,19 @@
 		isScrolledUp = false;
 		scrollToBottom();
 
-		threadMeta = { main: { title: 'Main Agent', status: 'running' } };
+		threadMeta['main'] = { title: 'Main Agent', status: 'running' };
 
-		const agentIdx = messages.length;
-		messages = [...messages, { role: 'agent', content: '', blocks: [] }];
+		let agentIdx = messages.length;
+		if (
+			requestBody.toolResponse &&
+			messages.length > 0 &&
+			messages[messages.length - 1].role === 'agent'
+		) {
+			agentIdx = messages.length - 1;
+		} else {
+			agentIdx = messages.length;
+			messages = [...messages, { role: 'agent', content: '', blocks: [] }];
+		}
 
 		try {
 			const res = await fetch('/api/chat', {
@@ -277,7 +278,6 @@
 
 							if (newApprovals.length > 0) {
 								pendingApprovals = [...pendingApprovals, ...newApprovals];
-								accumulatedResponses = [];
 								scrollToBottom();
 							}
 							continue;
@@ -312,8 +312,7 @@
 							}
 
 							if (newQuestions.length > 0) {
-								pendingQuestions = newQuestions;
-								accumulatedResponses = [];
+								pendingQuestions = [...pendingQuestions, ...newQuestions];
 								scrollToBottom();
 							}
 							continue;
@@ -422,6 +421,7 @@
 			scrollToBottom();
 		} finally {
 			isThinking = false;
+			checkAndSendPayload();
 		}
 	}
 	function startNewChat() {
@@ -432,6 +432,20 @@
 		accumulatedResponses = [];
 		customAnswers = {};
 		threadMeta = {};
+	}
+	async function checkAndSendPayload() {
+		if (
+			pendingQuestions.length === 0 &&
+			pendingApprovals.length === 0 &&
+			accumulatedResponses.length > 0
+		) {
+			// Only trigger the next turn if the previous stream has completely finished
+			if (!isThinking) {
+				const payload = [...accumulatedResponses];
+				accumulatedResponses = [];
+				await triggerTurn({ toolResponse: payload });
+			}
+		}
 	}
 </script>
 
@@ -825,14 +839,12 @@
 							<div class="flex gap-2 pt-1">
 								<button
 									onclick={() => sendToolApproval(approval.toolCallId, 'allow')}
-									disabled={isThinking}
 									class="flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] font-bold text-emerald-700 shadow-sm transition-all hover:bg-emerald-100 active:scale-95 disabled:opacity-50"
 								>
 									Approve Action
 								</button>
 								<button
 									onclick={() => sendToolApproval(approval.toolCallId, 'deny')}
-									disabled={isThinking}
 									class="flex-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] font-bold text-red-700 shadow-sm transition-all hover:bg-red-100 active:scale-95 disabled:opacity-50"
 								>
 									Deny
@@ -841,7 +853,8 @@
 						</div>
 					{/each}
 				</div>
-			{:else if pendingQuestions && pendingQuestions.length > 0}
+			{/if}
+			{#if pendingQuestions && pendingQuestions.length > 0}
 				<!-- Wrapper for multiple pending questions -->
 				<div class="flex flex-col gap-4">
 					{#each pendingQuestions as question}
@@ -871,7 +884,6 @@
 									{#each question.options as opt}
 										<button
 											onclick={() => sendToolResponse(question.toolCallId, opt)}
-											disabled={isThinking}
 											class="rounded-xl border border-indigo-200 bg-white px-4 py-2 text-[13px] font-medium text-slate-700 shadow-sm transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 active:scale-95 disabled:opacity-50"
 										>
 											{opt}
@@ -887,14 +899,13 @@
 									onkeydown={(e) =>
 										e.key === 'Enter' &&
 										sendToolResponse(question.toolCallId, customAnswers[question.toolCallId] || '')}
-									disabled={isThinking}
 									placeholder="Or type a custom response..."
 									class="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 transition-all outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 disabled:opacity-50"
 								/>
 								<button
 									onclick={() =>
 										sendToolResponse(question.toolCallId, customAnswers[question.toolCallId] || '')}
-									disabled={isThinking || !customAnswers[question.toolCallId]?.trim()}
+									disabled={!customAnswers[question.toolCallId]?.trim()}
 									class="flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white transition-all hover:bg-indigo-500 disabled:pointer-events-none disabled:opacity-30"
 								>
 									Send
@@ -903,7 +914,8 @@
 						</div>
 					{/each}
 				</div>
-			{:else}
+			{/if}
+			{#if pendingApprovals.length === 0 && pendingQuestions.length === 0}
 				<!-- Standard Input Box -->
 				<div
 					class="relative flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm transition-all focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-500/10 hover:border-slate-300"
