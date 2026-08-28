@@ -3,6 +3,7 @@ use std::io::Read;
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use wreq::{Client, header};
+use flate2::read::{DeflateDecoder, GzDecoder};
 
 #[derive(Debug)]
 pub struct WebSearchResult {
@@ -50,11 +51,30 @@ fn get_structured_web_search_result(raw_html: &str) -> Result<Vec<WebSearchResul
 }
 
 /// Decompresses brotli bytes to string
-fn decompress_br(raw_bytes: &[u8]) -> String {
+fn decompress_payload(raw_bytes: &[u8], encoding: &str) -> String {
     let mut raw_html = String::new();
-    let mut decompressor = brotli::Decompressor::new(raw_bytes, 4096);
-    if let Err(e) = decompressor.read_to_string(&mut raw_html) {
-        println!("Brotli decompression failed (maybe not compressed): {e}");
+
+    let result = match encoding {
+        "br" => {
+            let mut decompressor = brotli::Decompressor::new(raw_bytes, 4096);
+            decompressor.read_to_string(&mut raw_html)
+        }
+        "gzip" => {
+            let mut decompressor = GzDecoder::new(raw_bytes);
+            decompressor.read_to_string(&mut raw_html)
+        }
+        "deflate" => {
+            let mut decompressor = DeflateDecoder::new(raw_bytes);
+            decompressor.read_to_string(&mut raw_html)
+        }
+        _ => {
+            raw_html = String::from_utf8_lossy(raw_bytes).to_string();
+            Ok(raw_html.len())
+        }
+    };
+
+    if let Err(e) = result {
+        println!("Decompression failed for encoding: '{}': {}", encoding, e);
         raw_html = String::from_utf8_lossy(raw_bytes).to_string();
     }
     raw_html
@@ -75,8 +95,15 @@ pub async fn web_search(query: &str, client: &Client) -> Result<String> {
         .send()
         .await?;
 
+    let encoding = resp
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .and_then(|val| val.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
     let raw_bytes = resp.bytes().await?;
-    let raw_html = decompress_br(&raw_bytes);
+    let raw_html = decompress_payload(&raw_bytes, &encoding);
 
     // println!("{raw_html}");
     let mut results_string = String::new();
@@ -125,8 +152,11 @@ pub async fn scrape_url(url: &str, client: &Client) -> Result<String> {
         }
     }
 
+    let encoding = resp.headers().get(header::CONTENT_ENCODING).and_then(|val| val.to_str().ok()).unwrap_or("").to_lowercase();
+
+
     let raw_bytes = resp.bytes().await?;
-    let raw_html = decompress_br(&raw_bytes);
+    let raw_html = decompress_payload(&raw_bytes, &encoding);
     let page = extract_page_text(&raw_html, url);
 
     const MAX_CHARS: usize = 20_000;
