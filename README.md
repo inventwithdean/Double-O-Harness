@@ -102,9 +102,15 @@ Now you can access the custom UI at `http://localhost:5173/`.
 
 ---
 
-## 🤖 Qodo Code Quality & PR Reviews
+## Qodo Code Review Evidence
+All the [PRs](https://github.com/inventwithdean/Double-O-Harness/pulls?q=is%3Apr+is%3Aclosed) to this repo were reviewed by Qodo.
 
-TODO: Complete this section.
+**Featured Review: The UI Overhaul ([PR #4](https://github.com/inventwithdean/Double-O-Harness/pull/4))**
+This major PR introduced a complete frontend overhaul, integrating TrueForge SDK's clarifying questions, full markdown rendering, and a new light theme. Qodo protected the main branch in two distinct phases:
+
+* **Standard Review (Critical XSS Block):** Qodo initially identified that raw markdown was being passed directly to the `marked` library without sanitization, opening the door for Cross-Site Scripting (XSS) attacks from maliciously crafted payloads. I immediately patched this by implementing `isomorphic-dompurify` to sanitize the payload prior to rendering.
+
+* **`/agentic_review` (Environment Catch):** After applying the fix, I ran `/agentic_review` to double-check the implementation. Qodo flagged a potential build failure, noting that the latest `isomorphic-dompurify` package required Node `22.22.2+`, which conflicted with the existing Vite toolchain's Node `20.19+` baseline. I was able to confidently bypass this warning since my server was already running Node `24.20.0`.
 
 ---
 
