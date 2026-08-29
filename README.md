@@ -1,6 +1,8 @@
 ## Double-O-Harness
 An ultra-cost efficient, autonomous Open Source Intelligence (OSINT) agent capable of executing hundreds of web searches, subagents for research and multi-page PDF dossier compilation with images.
 
+#### YouTube Demo: [https://youtu.be/khNe2tpHCvw](https://youtu.be/khNe2tpHCvw)
+
 #### Example OSINT Report on latest microduck robot by Pollen Robotics, Hugging Face.
 ![OSINT report on MicroDuck, Pollen Robotics](./examples/microduck.png)
 #### See [PDF](./examples/Pollen_Robotics_Microduck_OSINT_Dossier.pdf)
@@ -11,7 +13,7 @@ An ultra-cost efficient, autonomous Open Source Intelligence (OSINT) agent capab
 
 * **Extreme Search Economics:** Custom Rust MCP server running [`wreq`](https://github.com/0x676e67/wreq) + DuckDuckGo Lite endpoint + Brotli compression (`~15KB` payload/search) yielding **16,500+ searches per $1** (compared to $1 /1,000 searches with standard SerpAPIs).
 * **Daytona Sandbox Egress Bypass:** Solved Daytona's strict outbound network isolation by building an MCP tool that downloads external images into RAM, uploads them to Cloudflare R2 (`r2.cloudflarestorage.com` is on Daytona's essential allowlist), and hands presigned URIs back to the agent.
-* **Human-in-the-Loop Gatekeeping:** Built-in TrueForge human approval intercepting unverified image downloads to prevent unwanted image downloads/uploads.
+* **Human-in-the-Loop Gatekeeping:** Built-in TrueForge human approval intercepting unverified image downloads to prevent malicious payloads or arbitrary binary execution on our MCP server.
 * **Multi-Agent Compilation:** Leverages **DeepSeek V4 Flash** to coordinate parallel sub-agents for research, verification, and rendering formatted multi-page PDF dossiers.
 * **Dual UI Support:** Fully compatible with TrueForge’s native WebUI as well as a custom standalone **SvelteKit** dashboard.
 
