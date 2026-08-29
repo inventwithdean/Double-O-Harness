@@ -1,8 +1,9 @@
 ## Double-O-Harness
 An ultra-cost efficient, autonomous Open Source Intelligence (OSINT) agent capable of executing hundreds of web searches, subagents for research and multi-page PDF dossier compilation with images.
 
-#### Example OSINT Report on Qodo w/ Custom UI
-![Qodo OSINT](./examples/qodo.png)
+#### Example OSINT Report on latest microduck robot by Pollen Robotics, Hugging Face.
+![OSINT report on MicroDuck, Pollen Robotics](./examples/microduck.png)
+#### See [PDF](./examples/Pollen_Robotics_Microduck_OSINT_Dossier.pdf)
 
 ---
 
@@ -97,11 +98,6 @@ npm run dev
 
 Now you can access the custom UI at `http://localhost:5173/`.
 
-
-TrueForge has its own native UI at `http://localhost:8791/`.
-#### Example OSINT Report on WeMakeDevs w/ Native UI
-![WeMakeDevs OSINT](./examples/wemakedevs.png)
-
 ---
 
 ## 🤖 Qodo Code Quality & PR Reviews
@@ -110,4 +106,13 @@ TODO: Complete this section.
 
 ---
 
+### Some OSINT examples:
 
+#### Qodo w/ Custom UI
+![Qodo OSINT](./examples/qodo.png)
+
+
+#### WeMakeDevs w/ TrueForge's Native UI
+![WeMakeDevs OSINT](./examples/wemakedevs.png)
+
+---
